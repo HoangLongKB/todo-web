@@ -1,6 +1,7 @@
 'use client';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { todosApi, type Todo } from '@/lib/api/todos';
+import { useAuthStore } from '@/store/auth';
 
 const KEY = ['todos'];
 
@@ -9,7 +10,13 @@ const KEY = ['todos'];
  * invalidateQueries(KEY) = "dữ liệu todos cũ rồi, lần tới ai dùng thì tải lại".
  */
 export function useTodos() {
-  return useQuery({ queryKey: KEY, queryFn: () => todosApi.list() });
+  // enabled: chỉ gọi API khi đã có user, tránh request 401 lúc Firebase chưa khôi phục phiên
+  const user = useAuthStore((s) => s.user);
+  return useQuery({
+    queryKey: KEY,
+    queryFn: () => todosApi.list(),
+    enabled: !!user,
+  });
 }
 
 export function useCreateTodo() {
