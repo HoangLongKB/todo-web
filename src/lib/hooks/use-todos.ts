@@ -43,6 +43,11 @@ export function useDeleteTodo() {
   });
 }
 
+/** Không invalidate gì: export không đổi dữ liệu todo, chỉ ghi sang sheet. */
+export function useExportToSheet() {
+  return useMutation({ mutationFn: () => todosApi.exportToSheet() });
+}
+
 export function useApiHealth() {
   return useQuery({
     queryKey: ['health'],

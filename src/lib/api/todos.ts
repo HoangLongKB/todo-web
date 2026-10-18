@@ -19,6 +19,12 @@ export interface Health {
   status: string;
   version: string;
 }
+/** Kết quả GAS trả về sau khi ghi sheet (API chuyển tiếp nguyên). */
+export interface GasExportResult {
+  ok: boolean;
+  written?: number;
+  sheetUrl?: string;
+}
 
 export const todosApi = {
   list: async (page = 1, limit = 50) =>
@@ -31,4 +37,7 @@ export const todosApi = {
     await api.delete(`/todos/${id}`);
   },
   health: async () => (await api.get<Health>('/health')).data,
+  /** API -> GAS: ghi todo của người dùng vào tab Export của Google Sheet. */
+  exportToSheet: async () =>
+    (await api.post<GasExportResult>('/gas/export-todos')).data,
 };

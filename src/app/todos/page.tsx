@@ -7,6 +7,7 @@ import { z } from 'zod';
 import {
   useCreateTodo,
   useDeleteTodo,
+  useExportToSheet,
   useTodos,
   useToggleTodo,
 } from '@/lib/hooks/use-todos';
@@ -31,6 +32,7 @@ export default function TodosPage() {
   const create = useCreateTodo();
   const toggle = useToggleTodo();
   const remove = useDeleteTodo();
+  const exportSheet = useExportToSheet();
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -107,6 +109,35 @@ export default function TodosPage() {
       {todos.data && (
         <p className="text-xs text-zinc-500">{todos.data.total} việc</p>
       )}
+
+      {/* Chiều API -> GAS: API gọi web app Apps Script, GAS ghi sheet rồi trả kết quả */}
+      <div className="space-y-1 border-t border-zinc-200 pt-4">
+        <button
+          onClick={() => exportSheet.mutate()}
+          disabled={exportSheet.isPending || !todos.data?.items.length}
+          className="rounded border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50 disabled:opacity-50"
+        >
+          {exportSheet.isPending ? 'Đang xuất...' : 'Xuất ra Google Sheet'}
+        </button>
+        {exportSheet.isSuccess && (
+          <p className="text-sm text-green-700">
+            Đã ghi {exportSheet.data.written ?? 0} dòng.{' '}
+            {exportSheet.data.sheetUrl && (
+              <a
+                href={exportSheet.data.sheetUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="underline"
+              >
+                Mở sheet
+              </a>
+            )}
+          </p>
+        )}
+        {exportSheet.isError && (
+          <p className="text-sm text-red-600">{exportSheet.error.message}</p>
+        )}
+      </div>
     </div>
   );
 }
