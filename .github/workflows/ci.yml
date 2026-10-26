@@ -1,0 +1,54 @@
+# CI cho todo-web: chạy trên mỗi PR vào develop/test/main.
+# Ba job song song, không dùng secret. Kết quả dùng làm required check trong ruleset.
+name: ci
+
+on:
+  pull_request:
+    branches: [develop, test, main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm format:check
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm type-check
+      - run: pnpm test # hiện là placeholder, điểm yếu ghi nhận để đề xuất cải tiến
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # NEXT_PUBLIC_* không cần ở bước này: build chỉ kiểm tra code biên dịch được. Image thật build ở CD (ngày 2).
+      - run: pnpm build
