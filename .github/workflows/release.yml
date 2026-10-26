@@ -1,0 +1,97 @@
+# CD cho todo-web. Next nướng NEXT_PUBLIC_* lúc build nên MỖI MÔI TRƯỜNG MỘT IMAGE (không promote như API).
+# Nhánh -> môi trường: develop -> dev, test -> test, main -> prod (prod dừng chờ duyệt ở Environment production).
+name: release
+
+on:
+  push:
+    branches: [develop, test, main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  REGION: asia-southeast1
+  IMAGE: asia-southeast1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/todo/todo-web
+  RUNTIME_SA: todo-web-sa@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+jobs:
+  env:
+    runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.map.outputs.name }}
+      gh_env: ${{ steps.map.outputs.gh_env }}
+    steps:
+      - id: map
+        run: |
+          case "${{ github.ref_name }}" in
+            develop) echo "name=dev"  >> "$GITHUB_OUTPUT"; echo "gh_env=dev"        >> "$GITHUB_OUTPUT";;
+            test)    echo "name=test" >> "$GITHUB_OUTPUT"; echo "gh_env=test"       >> "$GITHUB_OUTPUT";;
+            main)    echo "name=prod" >> "$GITHUB_OUTPUT"; echo "gh_env=production" >> "$GITHUB_OUTPUT";;
+            *) echo "nhánh không map môi trường"; exit 1;;
+          esac
+
+  build-deploy:
+    needs: env
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: ${{ needs.env.outputs.gh_env }} # production có Required Reviewers -> dừng chờ duyệt
+    env:
+      ENV_NAME: ${{ needs.env.outputs.name }}
+      SERVICE: todo-web-${{ needs.env.outputs.name }}
+      API_URL: https://todo-api-${{ needs.env.outputs.name }}-${{ vars.GCP_PROJECT_NUMBER }}.asia-southeast1.run.app/api/v1
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: echo "sha=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker asia-southeast1-docker.pkg.dev --quiet
+      - uses: docker/setup-buildx-action@v3
+      - id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            NEXT_PUBLIC_APP_ENV=${{ env.ENV_NAME }}
+            NEXT_PUBLIC_API_BASE_URL=${{ env.API_URL }}
+            NEXT_PUBLIC_FIREBASE_API_KEY=${{ vars.FIREBASE_API_KEY }}
+            NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${{ vars.FIREBASE_AUTH_DOMAIN }}
+            NEXT_PUBLIC_FIREBASE_PROJECT_ID=${{ vars.GCP_PROJECT_ID }}
+            NEXT_PUBLIC_FIREBASE_APP_ID=${{ vars.FIREBASE_APP_ID }}
+          tags: |
+            ${{ env.IMAGE }}:${{ env.ENV_NAME }}-latest
+            ${{ env.IMAGE }}:${{ env.ENV_NAME }}-sha-${{ steps.meta.outputs.sha }}
+          cache-from: type=gha,scope=${{ env.ENV_NAME }}
+          cache-to: type=gha,mode=max,scope=${{ env.ENV_NAME }}
+      - name: Deploy
+        id: dep
+        run: |
+          if gcloud run services describe "$SERVICE" --region "$REGION" >/dev/null 2>&1; then MODE="--no-traffic --tag candidate"; echo "first=false" >> "$GITHUB_OUTPUT"; else MODE=""; echo "first=true" >> "$GITHUB_OUTPUT"; fi
+          gcloud run deploy "$SERVICE" --region "$REGION" \
+            --image "${IMAGE}@${{ steps.push.outputs.digest }}" \
+            --service-account "$RUNTIME_SA" \
+            --allow-unauthenticated --min-instances 0 --max-instances 2 --timeout 60 $MODE
+      - name: Health check
+        run: |
+          if [ "${{ steps.dep.outputs.first }}" = "true" ]; then URL="https://${SERVICE}-${{ vars.GCP_PROJECT_NUMBER }}.${REGION}.run.app/api/health";
+          else URL="https://candidate---${SERVICE}-${{ vars.GCP_PROJECT_NUMBER }}.${REGION}.run.app/api/health"; fi
+          for i in 1 2 3; do curl -fsS --max-time 10 "$URL" && { echo; exit 0; }; sleep 15; done
+          echo "web candidate không khỏe"; exit 1
+      - name: Chuyển traffic
+        if: steps.dep.outputs.first != 'true'
+        run: gcloud run services update-traffic "$SERVICE" --region "$REGION" --to-latest
+      - name: Dọn revision (giữ 3)
+        run: |
+          gcloud run revisions list --service "$SERVICE" --region "$REGION" --sort-by '~metadata.creationTimestamp' --format 'value(name)' | tail -n +4 | while read -r rev; do
+            gcloud run revisions delete "$rev" --region "$REGION" --quiet && echo "đã xóa $rev" || echo "bỏ qua $rev"; done
